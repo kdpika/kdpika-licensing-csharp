@@ -1,8 +1,8 @@
 # KDPika Licensing C# SDK
 
-Official SDK **2.0.0** for the current KDPika API contract.
+Official SDK **2.0.1** for the current KDPika API contract.
 
-[Documentation](https://licensing.kdpika.com/docs/v1/sdks/csharp) · [Download SDK ZIP](https://licensing.kdpika.com/docs/downloads/kdpika-csharp-sdk-2.0.0.zip)
+[Documentation](https://licensing.kdpika.com/docs/v1/sdks/csharp) · [Download SDK ZIP](https://licensing.kdpika.com/docs/downloads/kdpika-csharp-sdk-2.0.1.zip)
 
 ## Supported licensing capabilities
 
@@ -19,7 +19,7 @@ Advanced matching, floating seats, credits and portal availability depend on you
 ## Install
 
 ```sh
-dotnet add package KDPika.LicenseSdk --version 2.0.0 --source ./packages
+dotnet add package KDPika.LicenseSdk --version 2.0.1 --source ./packages
 ```
 
 For JavaScript and C#, local package/source downloads are available; npm/NuGet publication is separate and must be confirmed before using a registry-only install command.

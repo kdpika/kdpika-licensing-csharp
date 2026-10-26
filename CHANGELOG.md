@@ -1,4 +1,4 @@
-# Current release: 2.0.0
+# Current release: 2.0.1
 
 - Required signed hardware binding, floating checkout/heartbeat/checkin and online idempotent usage credits.
 - Updated installation, source links and cross-language capability documentation.
@@ -6,7 +6,7 @@
 
 # Package observations and documentation changes
 
-## 2.0.0 — 2026-10-26
+## 2.0.1 — 2026-10-26
 
 - Retarget the library, focused tests and examples to .NET 10 LTS; no licensing or signature changes.
 
