@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><TargetFramework>net10.0</TargetFramework><ImplicitUsings>enable</ImplicitUsings><Nullable>enable</Nullable><GeneratePackageOnBuild>false</GeneratePackageOnBuild><PackageId>KDPika.LicenseSdk</PackageId><Version>2.0.0</Version><Description>KDPika Licensing client with signed device binding, floating leases and usage credits.</Description><PackageReadmeFile>README.md</PackageReadmeFile><PackageLicenseFile>LICENSE</PackageLicenseFile><PackageProjectUrl>https://licensing.kdpika.com/docs/v1/sdks/csharp</PackageProjectUrl><Authors>KDPika</Authors><PackageTags>licensing;ed25519;activation</PackageTags></PropertyGroup>
+  <ItemGroup><PackageReference Include="BouncyCastle.Cryptography" Version="2.7.0" /></ItemGroup>
+  <ItemGroup><None Include="../README.md" Pack="true" PackagePath="/" /><None Include="../LICENSE" Pack="true" PackagePath="/" /></ItemGroup>
+</Project>
