@@ -16,16 +16,16 @@ Context is a declaration by trusted application code, not browser/hardware attes
 
 [Download the source ZIP](https://licensing.kdpika.com/docs/downloads/kdpika-csharp-sdk-2.1.0.zip) · [Desktop / Web setup and migration](https://licensing.kdpika.com/docs/v1/licensing/application-access)
 
-## Install the current source (npm/NuGet release not configured)
+## Install from NuGet
 
 ```sh
-dotnet add reference /path/to/extracted/csharp-sdk/KDPika.LicenseSdk/KDPika.LicenseSdk.csproj
+dotnet add package KDPika.LicenseSdk --version 2.1.0
 ```
 
 
 Official SDK **2.1.0** for signed licensing, hardware binding, floating seats, metered credits and Desktop / Web access controls.
 
-[Documentation](https://licensing.kdpika.com/docs/v1/sdks/csharp) · [Download SDK ZIP](https://licensing.kdpika.com/docs/downloads/kdpika-csharp-sdk-2.1.0.zip)
+[Documentation](https://licensing.kdpika.com/docs/v1/sdks/csharp) · [Published package](https://www.nuget.org/packages/KDPika.LicenseSdk/2.1.0) · [Download SDK ZIP](https://licensing.kdpika.com/docs/downloads/kdpika-csharp-sdk-2.1.0.zip)
 
 ## Supported licensing capabilities
 
