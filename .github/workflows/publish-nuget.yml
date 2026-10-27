@@ -1,0 +1,137 @@
+name: Publish SDK to NuGet (manual approval)
+
+# Preparing or pushing this file never publishes a package.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Existing reviewed release tag version, without v (for example 2.1.0)'
+        required: true
+        type: string
+      confirmation:
+        description: 'Type: publish KDPika.LicenseSdk'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nuget-release
+  cancel-in-progress: false
+
+jobs:
+  package:
+    if: github.ref == 'refs/heads/main' && inputs.confirmation == 'publish KDPika.LicenseSdk'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    outputs:
+      sha256: ${{ steps.inspect.outputs.sha256 }}
+      artifact_id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - name: Validate requested version
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os, re
+          if not re.fullmatch(r'(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)', os.environ['RELEASE_VERSION']):
+              raise SystemExit('Enter an existing stable version, without the v prefix.')
+          PY
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: refs/tags/v${{ inputs.version }}
+          persist-credentials: false
+      - name: Check release identity
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os, xml.etree.ElementTree as ET
+          root = ET.parse('KDPika.LicenseSdk/KDPika.LicenseSdk.csproj').getroot()
+          expected = {'PackageId': 'KDPika.LicenseSdk', 'Version': os.environ['RELEASE_VERSION'],
+                      'TargetFramework': 'net10.0', 'PackageLicenseExpression': 'MIT',
+                      'RepositoryUrl': 'https://github.com/kdpika/kdpika-licensing-csharp'}
+          for key, value in expected.items():
+              if root.findtext('.//' + key) != value:
+                  raise SystemExit('Release metadata mismatch: ' + key)
+          PY
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build the reviewed tag's package
+        run: dotnet pack KDPika.LicenseSdk/KDPika.LicenseSdk.csproj --configuration Release --output artifacts --nologo
+      - name: Inspect packaged metadata and contents
+        id: inspect
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib, re, zipfile, xml.etree.ElementTree as ET
+          path = pathlib.Path('artifacts/KDPika.LicenseSdk.' + os.environ['RELEASE_VERSION'] + '.nupkg')
+          if list(path.parent.glob('*.nupkg')) != [path]:
+              raise SystemExit('Expected exactly one release package.')
+          with zipfile.ZipFile(path) as archive:
+              names = archive.namelist()
+              nuspecs = [n for n in names if n.endswith('.nuspec')]
+              if len(nuspecs) != 1 or 'lib/net10.0/KDPika.LicenseSdk.dll' not in names or 'README.md' not in names:
+                  raise SystemExit('Incomplete package contents.')
+              root = ET.fromstring(archive.read(nuspecs[0]))
+              values = {n.tag.rsplit('}', 1)[-1]: n.text for n in root.iter()}
+              if values.get('id') != 'KDPika.LicenseSdk' or values.get('version') != os.environ['RELEASE_VERSION'] or values.get('license') != 'MIT':
+                  raise SystemExit('Packaged identity mismatch.')
+              for name in names:
+                  parts = pathlib.PurePosixPath(name).parts
+                  if name.startswith('/') or '..' in parts or any(p in {'.env', '.npmrc', '.pypirc', 'credentials.toml', 'NuGet.Config'} for p in parts):
+                      raise SystemExit('Private or unsafe package member.')
+                  if re.search(rb'-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----|(?:ghp_|github_pat_|pypi-|npm_|sk_live_|sk_test_|whsec_)[A-Za-z0-9_-]{25,}', archive.read(name)):
+                      raise SystemExit('Potential secret in release package.')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('sha256=' + hashlib.sha256(path.read_bytes()).hexdigest() + '\n')
+          PY
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        id: upload
+        with:
+          name: nuget-package
+          path: artifacts/*.nupkg
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment: nuget
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@018cc2cf5baa6db3ef3c5f8a56943fffe632ef53 # v6
+        with:
+          artifact-ids: ${{ needs.package.outputs.artifact_id }}
+          path: artifacts
+          merge-multiple: true
+      - name: Verify approved artifact checksum
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          EXPECTED_SHA256: ${{ needs.package.outputs.sha256 }}
+        run: |
+          python3 - <<'PY'
+          import hashlib, os, pathlib
+          path = pathlib.Path('artifacts/KDPika.LicenseSdk.' + os.environ['RELEASE_VERSION'] + '.nupkg')
+          if hashlib.sha256(path.read_bytes()).hexdigest() != os.environ['EXPECTED_SHA256']:
+              raise SystemExit('Release artifact checksum mismatch.')
+          PY
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Authenticate to NuGet using GitHub OIDC
+        id: login
+        uses: NuGet/login@8d196754b4036150537f80ac539e15c2f1028841 # v1
+        with:
+          user: kdpika
+      - name: Publish approved package
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          NUGET_API_KEY: ${{ steps.login.outputs.NUGET_API_KEY }}
+        run: dotnet nuget push "artifacts/KDPika.LicenseSdk.${RELEASE_VERSION}.nupkg" --api-key "$NUGET_API_KEY" --source https://api.nuget.org/v3/index.json
