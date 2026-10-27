@@ -9,7 +9,7 @@ namespace KDPika.LicenseSdk;
 
 public sealed partial class LicenseClient : IAsyncDisposable
 {
-    private readonly string product, environment, baseUrl, applicationName, applicationVersion, storageDir;
+    private readonly string product, environment, baseUrl, applicationName, applicationVersion, storageDir, applicationType;
     private readonly HttpClient http;
     private readonly Func<DateTimeOffset> clock;
     private readonly Func<string,JsonElement> fingerprintProvider;
@@ -17,7 +17,7 @@ public sealed partial class LicenseClient : IAsyncDisposable
     public string InstallationId { get; }
     public bool Activated => ReadText("activation-token") is not null;
 
-    public LicenseClient(string product, string environment = "LIVE", string baseUrl = "https://licensing.kdpika.com", string applicationName = "Licensed Application", string applicationVersion = "", Dictionary<string,string>? verificationKey = null, string? storageDir = null, HttpClient? httpClient = null, Func<DateTimeOffset>? clock = null, Func<string,JsonElement>? fingerprintProvider = null)
+    public LicenseClient(string product, string environment = "LIVE", string baseUrl = "https://licensing.kdpika.com", string applicationName = "Licensed Application", string applicationVersion = "", Dictionary<string,string>? verificationKey = null, string? storageDir = null, HttpClient? httpClient = null, Func<DateTimeOffset>? clock = null, Func<string,JsonElement>? fingerprintProvider = null, string applicationType = "desktop")
     {
         if (string.IsNullOrWhiteSpace(product)) throw new ArgumentException("A Public App ID is required.");
         if (!SafeBaseUrl(baseUrl)) throw new ArgumentException("The API base URL must use HTTPS; loopback HTTP is allowed for development.");
@@ -25,9 +25,10 @@ public sealed partial class LicenseClient : IAsyncDisposable
         if (environment is not ("SANDBOX" or "LIVE")) throw new ArgumentException("Environment must be SANDBOX or LIVE.");
         if (verificationKey is not null && (!verificationKey.ContainsKey("key_id") || !verificationKey.ContainsKey("public_key"))) throw new ArgumentException("Pinned verification key is incomplete.");
         this.product=product.Trim();this.environment=environment;this.baseUrl=baseUrl.TrimEnd('/');this.applicationName=applicationName;this.applicationVersion=applicationVersion;this.verificationKey=verificationKey;this.clock=clock??(()=>DateTimeOffset.UtcNow);
+        if(applicationType is not ("desktop" or "web"))throw new ArgumentException("Application type must be desktop or web.");this.applicationType=applicationType;
         this.fingerprintProvider=fingerprintProvider??HardwareFingerprint.Collect;
         http=httpClient??new HttpClient(new HttpClientHandler{AllowAutoRedirect=false}){Timeout=TimeSpan.FromSeconds(15)};
-        var ns=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{this.baseUrl.ToLowerInvariant()}|{this.product}|{this.environment}"))).ToLowerInvariant()[..20];
+        var ns=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes($"{this.baseUrl.ToLowerInvariant()}|{this.product}|{this.environment}|{this.applicationType}"))).ToLowerInvariant()[..20];
         this.storageDir=Path.Combine(storageDir??DefaultStorageDir(applicationName),ns);Directory.CreateDirectory(this.storageDir);
         TryUnixMode(this.storageDir,UnixFileMode.UserRead|UnixFileMode.UserWrite|UnixFileMode.UserExecute);
         var identity=ReadJson("installation.json");
@@ -86,6 +87,7 @@ public sealed partial class LicenseClient : IAsyncDisposable
         if(payload.ValueKind!=JsonValueKind.Object)throw new InvalidDataException("Invalid signed payload.");
         var verifier=new Ed25519Signer();verifier.Init(false,new Ed25519PublicKeyParameters(Decode(key["public_key"]),0));var canonical=Encoding.UTF8.GetBytes(encoded??Canonical(payload));verifier.BlockUpdate(canonical,0,canonical.Length);if(!verifier.VerifySignature(Decode(signature.GetString()!)))throw new CryptographicException("The license signature is invalid.");
         if(payload.GetProperty("product_id").GetString()!=product||payload.GetProperty("environment").GetString()?.ToUpperInvariant()!=environment)throw new CryptographicException("The signed license belongs to another product or environment.");
+        if(!ApplicationAccess.Allowed(payload,applicationType))return Error("APPLICATION_NOT_ALLOWED","This license does not include this type of app.",source,response,payload,true);
         var expected=Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(InstallationId))).ToLowerInvariant();if(payload.GetProperty("device").GetProperty("installation_hash").GetString()!=expected)throw new CryptographicException("The signed license belongs to another installation.");
         if(!payload.GetProperty("device").TryGetProperty("fingerprint",out var binding)||!HardwareFingerprint.Matches(binding,fingerprintProvider(product)))return Error("FINGERPRINT_MISMATCH","This activation belongs to a different device.",source,response,payload,true);
         var now=clock();var state=ReadJson("signed-state.json");var checkpoint=Time(state,"last_seen_at");var server=Time(payload,"server_time");var latest=new[]{checkpoint,server}.Where(x=>x is not null).Max();
@@ -114,7 +116,7 @@ public sealed partial class LicenseClient : IAsyncDisposable
     private void Checkpoint(){var state=ReadJson("signed-state.json");var map=state.ValueKind==JsonValueKind.Object?JsonSerializer.Deserialize<Dictionary<string,JsonElement>>(state.GetRawText())??new():new();map["last_seen_at"]=JsonSerializer.SerializeToElement(clock().ToString("O"));WriteJson("signed-state.json",map);}
     private async Task BestEffortDeactivate(string token){try{await RequestAsync(HttpMethod.Post,"/api/v1/licenses/deactivate",new{},new(){{"Authorization","Bearer "+token}},CancellationToken.None);}catch{}}
 
-    private async Task<ApiResponse> RequestAsync(HttpMethod method,string endpoint,object? body,Dictionary<string,string> headers,CancellationToken cancellationToken){using var request=new HttpRequestMessage(method,baseUrl+endpoint);request.Headers.Accept.ParseAdd("application/json");request.Headers.UserAgent.ParseAdd("KDPika-CSharp-SDK/1.0.1");request.Headers.TryAddWithoutValidation("X-Installation-ID",InstallationId);foreach(var pair in headers){request.Headers.Remove(pair.Key);request.Headers.TryAddWithoutValidation(pair.Key,pair.Value);}if(body is not null)request.Content=JsonContent.Create(body);using var response=await http.SendAsync(request,cancellationToken);var json=await response.Content.ReadAsStringAsync(cancellationToken);JsonElement parsed;try{parsed=JsonDocument.Parse(json).RootElement.Clone();if(parsed.ValueKind!=JsonValueKind.Object)throw new JsonException();}catch{parsed=JsonSerializer.SerializeToElement(new{success=false,error=new{code="INVALID_RESPONSE",message="The server returned an invalid response."}});}return new(response.IsSuccessStatusCode&&parsed.TryGetProperty("success",out var success)&&success.ValueKind==JsonValueKind.True,(int)response.StatusCode,parsed);}
+    private async Task<ApiResponse> RequestAsync(HttpMethod method,string endpoint,object? body,Dictionary<string,string> headers,CancellationToken cancellationToken){using var request=new HttpRequestMessage(method,baseUrl+endpoint);request.Headers.TryAddWithoutValidation("X-Application-Type",applicationType);request.Headers.Accept.ParseAdd("application/json");request.Headers.UserAgent.ParseAdd("KDPika-CSharp-SDK/1.0.1");request.Headers.TryAddWithoutValidation("X-Installation-ID",InstallationId);foreach(var pair in headers){request.Headers.Remove(pair.Key);request.Headers.TryAddWithoutValidation(pair.Key,pair.Value);}if(body is not null)request.Content=JsonContent.Create(body);using var response=await http.SendAsync(request,cancellationToken);var json=await response.Content.ReadAsStringAsync(cancellationToken);JsonElement parsed;try{parsed=JsonDocument.Parse(json).RootElement.Clone();if(parsed.ValueKind!=JsonValueKind.Object)throw new JsonException();}catch{parsed=JsonSerializer.SerializeToElement(new{success=false,error=new{code="INVALID_RESPONSE",message="The server returned an invalid response."}});}return new(response.IsSuccessStatusCode&&parsed.TryGetProperty("success",out var success)&&success.ValueKind==JsonValueKind.True,(int)response.StatusCode,parsed);}
     private LicenseResult ResponseError(ApiResponse response)=>Error(response.Body.TryGetProperty("error",out var error)&&error.TryGetProperty("code",out var code)?code.GetString()!:"HTTP_ERROR",error.ValueKind==JsonValueKind.Object&&error.TryGetProperty("message",out var message)?message.GetString()!:"The licensing service rejected the request.","online",response);
     private LicenseResult Error(string code,string message,string source,ApiResponse? response=null,JsonElement payload=default,bool signature=false)=>new(false,source,payload.ValueKind==JsonValueKind.Undefined?EmptyPayload():payload.Clone(),code,message,response is null?null:RequestId(response),signature);
     private static string? RequestId(ApiResponse response)=>response.Body.TryGetProperty("request_id",out var id)?id.GetString():null;
