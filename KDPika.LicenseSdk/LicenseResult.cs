@@ -13,7 +13,7 @@ public sealed record LicenseResult(bool Valid, string Source, JsonElement Payloa
         if(server is null||next is null||grace is null||next<server||grace<server||now.AddMinutes(5)<server)return false;
         if(!Payload.TryGetProperty("expires_at",out var expiry)||(expiry.ValueKind!=JsonValueKind.Null&&(Time("expires_at") is not DateTimeOffset end||now>=end)))return false;
         if(!LicensePolicy.Credits(Payload))return false;
-        if(Payload.GetProperty("metered").GetBoolean()&&(Source!="online"||Payload.GetProperty("credit_balance").GetInt64()==0))return false;
+        if(Payload.GetProperty("metered").GetBoolean()&&Source!="online")return false;
         if(!Payload.TryGetProperty("floating",out var floating))return false;
         if(floating.ValueKind!=JsonValueKind.Null&&(SeatGuard is null||!SeatGuard(Payload)))return false;
         return Source is "cache" or "offline" ? now<=grace : now<next;

@@ -94,7 +94,9 @@ public sealed partial class LicenseClient
     }, cancellationToken);
 
     /// <summary>No automatic retry. Persist one idempotency key per business operation before sending.</summary>
-    public Task<CreditConsumption> ConsumeAsync(long amount, string? idempotencyKey = null, string? reason = null, CancellationToken cancellationToken = default)
+    public Task<CreditConsumption> ConsumeActionAsync(string action,string requestKey,long expectedUnits=1,CancellationToken cancellationToken=default)=>ConsumeInnerAsync(expectedUnits,requestKey,null,action,cancellationToken);
+    public Task<CreditConsumption> ConsumeAsync(long amount,string? idempotencyKey=null,string? reason=null,CancellationToken cancellationToken=default)=>ConsumeInnerAsync(amount,idempotencyKey,reason,null,cancellationToken);
+    private Task<CreditConsumption> ConsumeInnerAsync(long amount,string? idempotencyKey,string? reason,string? action,CancellationToken cancellationToken)
     {
         if (amount < 1 || amount > LicensePolicy.MaxCredits) throw new CreditOperationException("INVALID_CREDIT_AMOUNT");
         if ((idempotencyKey is not null && !Regex.IsMatch(idempotencyKey, @"\A[A-Za-z0-9_.:-]{8,190}\z")) || (reason is not null && (reason.EnumerateRunes().Count() > 190 || Regex.IsMatch(reason, @"[\x00-\x1f\x7f]")))) throw new CreditOperationException("INVALID_REQUEST");
@@ -103,7 +105,7 @@ public sealed partial class LicenseClient
             var token = ReadText("activation-token"); if (token is null) throw new CreditOperationException("NOT_ACTIVATED");
             JsonElement fingerprint; try { fingerprint = fingerprintProvider(product); } catch { throw new CreditOperationException("HARDWARE_UNAVAILABLE"); }
             ApiResponse response;
-            try { response = await RequestAsync(HttpMethod.Post, "/api/v1/licenses/consume", new { amount, idempotency_key = idempotencyKey, reason, fingerprint, session_token = SessionToken() }, AuthHeaders(token), cancellationToken); }
+            try { response = await RequestAsync(HttpMethod.Post, "/api/v1/licenses/consume", new { amount, action, idempotency_key = idempotencyKey, reason, fingerprint, session_token = SessionToken() }, AuthHeaders(token), cancellationToken); }
             catch { throw new CreditOperationException("NETWORK_ERROR"); }
             if (!response.Ok && ResponseError(response).ErrorCode != "INSUFFICIENT_CREDITS") { Remove("signed-state.json"); throw new CreditOperationException(ResponseError(response).ErrorCode ?? "HTTP_ERROR"); }
             JsonElement signed; LicenseResult r;
@@ -114,13 +116,14 @@ public sealed partial class LicenseClient
             if (!response.Ok)
             {
                 var balance = r.Payload.GetProperty("credit_balance").GetInt64();
-                if (response.Status != 402 || balance >= amount || !response.Body.TryGetProperty("balance", out var b) || !LicensePolicy.Integer(b) || b.GetInt64() != balance) throw new CreditOperationException("SIGNATURE_INVALID");
+                if (response.Status != 402 || (action is null && balance >= amount) || !response.Body.TryGetProperty("balance", out var b) || !LicensePolicy.Integer(b) || b.GetInt64() != balance) throw new CreditOperationException("SIGNATURE_INVALID");
                 await SaveState(signed, cancellationToken); throw new InsufficientCreditsException(balance);
             }
             CreditConsumption receipt;
             try
             {
                 var c = r.Payload.GetProperty("credit_transaction"); var body = response.Body;
+                if(action is not null){var delta=c.GetProperty("amount").GetInt64();if(delta>=0||delta < -9007199254740991L)throw new CreditOperationException("SIGNATURE_INVALID");amount=-delta;}
                 var id = c.GetProperty("id").GetString()!; var balance = c.GetProperty("balance_after"); var allocated = c.GetProperty("total_allocated_after");
                 var replayed = c.GetProperty("replayed").GetBoolean();
                 if (c.GetProperty("type").GetString() != "consume" || !Regex.IsMatch(id, @"\Actx_[A-Za-z0-9_-]{1,36}\z") || c.GetProperty("amount").GetInt64() != -amount || !LicensePolicy.Integer(balance) || !LicensePolicy.Integer(allocated) || c.GetProperty("idempotency_hash").GetString() != (idempotencyKey is null ? null : HardwareFingerprint.Hash(idempotencyKey)) || body.GetProperty("transaction_id").GetString() != id || body.GetProperty("consumed").GetInt64() != amount || body.GetProperty("balance").GetInt64() != balance.GetInt64() || body.GetProperty("replayed").GetBoolean() != replayed) throw new InvalidDataException();

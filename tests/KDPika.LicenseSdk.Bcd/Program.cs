@@ -10,6 +10,18 @@ using Org.BouncyCastle.Security;
 var checks = 0;
 void Assert(bool condition, string label) { checks++; if (!condition) throw new Exception(label); }
 async Task Denied(Func<Task> action, string code) { try { await action(); throw new Exception("Expected " + code); } catch (CreditOperationException e) { Assert(e.ErrorCode == code, code + " got " + e.ErrorCode); } }
+if(args.Contains("--credit-commerce")){
+    using var f=new Fixture {Metered=true,Balance=0};Assert((await f.Client.ActivateAsync("FIXTURE")).Valid,"zero credit active");
+    var grant=await f.Client.RedeemCreditsAsync("KDP100CR","code-grant-first");Assert(grant.GetProperty("added").GetInt32()==100&&grant.GetProperty("balance").GetInt64()==100,"signed grant overrides untrusted outer fields");
+    Assert((await f.Client.RedeemCreditsAsync("KDP100CR","code-grant-first")).GetProperty("replayed").GetBoolean(),"safe replay");
+    await Denied(async()=>{await f.Client.RedeemCreditsAsync("WRONGCODE","code-grant-bad");},"CREDIT_CODE_UNAVAILABLE");
+    f.Uncertain=true;await Denied(async()=>{await f.Client.RedeemCreditsAsync("KDP100CR","code-grant-lost");},"NETWORK_ERROR");
+    Assert((await f.Client.RedeemCreditsAsync("KDP100CR","code-grant-lost")).GetProperty("replayed").GetBoolean()&&f.Balance==200,"lost response recovered without double grant");
+    Assert((await f.Client.CreditPacksAsync()).GetProperty("packs")[0].GetProperty("units").GetInt32()==100,"pack discovery");
+    Assert((await f.Client.CreateCreditCheckoutAsync("cpk_fixture")).GetProperty("checkout_url").GetString()!.StartsWith("https://store.example.test/"),"checkout link");
+    Assert((await f.Client.CreditHistoryAsync()).GetProperty("transactions").GetArrayLength()==0,"history");
+    Console.WriteLine(JsonSerializer.Serialize(new{result="PASS",checks,network=false}));return;
+}
 var raw = new Dictionary<string,string> { ["baseboard"] = " BOARD-ABC ", ["cpu"] = "CPU-X", ["disk"] = "disk-123" };
 var fp = HardwareFingerprint.FromComponents("app_test", raw, true);
 var expectedBoard = Fixture.Hash(Fixture.Hash("kdpika-hardware-v1|app_test") + "|baseboard|board-abc");
@@ -52,11 +64,11 @@ using(var f = new Fixture { Floating = true, WrongLease = true })
 }
 using(var f = new Fixture { Metered = true, Balance = 0 })
 {
-    Assert((await f.Client.ActivateAsync("TEST-KEY")).ErrorCode == "INSUFFICIENT_CREDITS" && f.Client.Activated, "zero-credit activation retained");
+    Assert((await f.Client.ActivateAsync("TEST-KEY")).Valid && f.Client.Activated, "zero-credit activation retained");
     Assert(await f.Client.GetBalanceAsync() == 0, "online zero balance");
     f.Balance = 5; Assert(await f.Client.GetBalanceAsync() == 5, "online top-up refresh");
     var spent = await f.Client.ConsumeAsync(5, "job-last-credit"); Assert(spent.Consumed == 5 && spent.Balance == 0 && !spent.Replayed, "last-credit charge is valid receipt");
-    Assert(!(await f.Client.CheckAsync()).Feature("export"), "zero balance denies features");
+    Assert((await f.Client.CheckAsync()).Feature("export"), "zero balance keeps included features");
     try { await f.Client.ConsumeAsync(1, "job-insufficient"); throw new Exception("overspend accepted"); } catch(InsufficientCreditsException e) { Assert(e.Balance == 0 && e.ErrorCode == "INSUFFICIENT_CREDITS", "typed verified insufficient balance"); }
 }
 using(var f = new Fixture { Metered = true, Balance = 10 })
@@ -105,6 +117,17 @@ sealed class Fixture : HttpMessageHandler
         if(Offline)throw new HttpRequestException("offline");
         if(body.TryGetProperty("fingerprint",out var fp)){FingerprintsSent++; if(fp.GetRawText().Contains("BOARD-ABC"))throw new Exception("raw hardware leaked");}
         if(path.EndsWith("/activate")) { Activations++; binding=body.GetProperty("fingerprint").Clone();return Reply(new{success=true,activation_token="act_test",license=Signed()}); }
+        if(path.StartsWith("/api/v1/credits/")){
+            if(path.EndsWith("/redeem")){
+                if(body.GetProperty("code").GetString()!="KDP100CR")return Fail("CREDIT_CODE_UNAVAILABLE",422);
+                var key=body.GetProperty("idempotency_key").GetString()!;var replayed=jobs.TryGetValue(key,out var saved);
+                if(!replayed){Balance+=100;saved=(100,Balance,"ctx_code_grant");jobs[key]=saved;}
+                var transaction=new{id=saved.Id,type="grant",amount=100,balance_after=saved.Balance,total_allocated_after=100,idempotency_hash=Hash("code:"+Hash(key)),replayed};
+                if(Uncertain){Uncertain=false;throw new HttpRequestException("lost reply");}
+                return Reply(new{success=true,license=Signed(transaction),transaction_id=saved.Id,added=999,balance=999,replayed});
+            }
+            return Reply(new{success=true,license=Signed(),packs=new[]{new{id="cpk_fixture",units=100}},checkout_url="https://store.example.test/?kdpika_credit_checkout=opaque",transactions=Array.Empty<object>()});
+        }
         if(path.EndsWith("/deactivate"))return Reply(new{success=true,deactivated=true});
         if(path.EndsWith("/checkout")) { Checkouts++;if(Full)return Fail("ALL_SEATS_IN_USE",409);session=Seat;return Reply(new{success=true,session_token=session,license=Signed()}); }
         if(path.EndsWith("/heartbeat")) { if(MissingSeat){MissingSeat=false;session=null;return Fail("SESSION_NOT_FOUND",404);}return Reply(new{success=true,license=Signed()}); }

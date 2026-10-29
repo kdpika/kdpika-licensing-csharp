@@ -102,7 +102,6 @@ public sealed partial class LicenseClient : IAsyncDisposable
         if(!LicensePolicy.Lease(payload,SessionToken(),now))return Error("SESSION_EXPIRED","Your shared seat expired. Connect to reserve a seat again.",source,response,payload,true);
         if(!LicensePolicy.Credits(payload))return Error("INVALID_RESPONSE","The credit policy is unavailable.",source,response,payload,true);
         if(payload.GetProperty("metered").GetBoolean()&&source!="online")return Error("METERED_ONLINE_REQUIRED","Connect to check or use credits.",source,response,payload,true);
-        if(payload.GetProperty("metered").GetBoolean()&&payload.GetProperty("credit_balance").GetInt64()==0)return Error("INSUFFICIENT_CREDITS","There are not enough credits. Contact the software publisher.",source,response,payload,true);
         return new(true,source,payload.Clone(),RequestId:response is null?null:RequestId(response),SignatureValid:true,Clock:clock,SeatGuard:p=>LicensePolicy.Lease(p,SessionToken(),clock()));
     }
 
