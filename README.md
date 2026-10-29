@@ -45,7 +45,7 @@ Advanced matching, floating seats, credits and portal availability depend on you
 dotnet add package KDPika.LicenseSdk --version 2.2.0 --source ./packages
 ```
 
-For JavaScript and C#, local package/source downloads are available; npm/NuGet publication is separate and must be confirmed before using a registry-only install command.
+Version 2.2.0 is published in its official package registry. Versioned source downloads and local package installation remain available.
 
 
 ## Hardware, shared seats and credits
@@ -143,7 +143,7 @@ See LICENSE for existing license-information boundaries and CHANGELOG.md for ver
 
 ## Target runtime update
 
-The library, focused test projects and examples target .NET 10 LTS. Build and run with the .NET 10 SDK/runtime; .NET 7 and .NET 8 applications need a runtime migration before referencing this target. The final private release candidate was rebuilt for net10.0. Earlier Part 3 net7.0 artifacts are superseded and must not be published. No package has been published.
+The library, focused test projects and examples target .NET 10 LTS. Build and run with the .NET 10 SDK/runtime; .NET 7 and .NET 8 applications need a runtime migration before referencing this target. The published 2.2.0 package targets net10.0. Earlier private net7.0 artifacts are superseded; use the current registry package.
 
 
 ## Credit codes and store top-ups
